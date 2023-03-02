@@ -3,8 +3,12 @@
 
 #include "riscv.h"
 #include "types.h"
+#include "queue.h"
 
-#define NPROC (16)
+#define NPROC (512)
+#define FD_BUFFER_SIZE (16)
+
+struct file;
 
 #define MAX_SYSCALL_NUM 500 
 
@@ -49,26 +53,23 @@ struct proc {
 	enum procstate state; // Process state
 	int pid; // Process ID
 	pagetable_t pagetable; // User page table
-	uint64 ustack;
+	uint64 ustack; // Virtual address of kernel stack
 	uint64 kstack; // Virtual address of kernel stack
 	struct trapframe *trapframe; // data page for trampoline.S
 	struct context context; // swtch() here to run process
 	uint64 max_page;
+	struct proc *parent; // Parent process
+	uint64 exit_code;
+	struct file *files[FD_BUFFER_SIZE];
 	uint64 program_brk;
 	uint64 heap_bottom;
-	/*
-	* LAB1: you may need to add some new fields here
-	*/
 	int time;
 	int syscall_times[MAX_SYSCALL_NUM];
 	// mmap
 	struct VMA vma[VMA_MAX];
 };
 
-/*
-* LAB1: you may need to define struct for TaskInfo here
-*/
-
+int cpuid();
 typedef enum {
     UnInit,
     Ready,
@@ -88,7 +89,13 @@ void proc_init();
 void scheduler() __attribute__((noreturn));
 void sched();
 void yield();
+int fork();
+int exec(char *);
+int wait(int, int *);
+void add_task(struct proc *);
+struct proc *pop_task();
 struct proc *allocproc();
+int fdalloc(struct file *);
 // swtch.S
 void swtch(struct context *, struct context *);
 

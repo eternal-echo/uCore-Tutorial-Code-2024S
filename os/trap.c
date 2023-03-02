@@ -16,18 +16,18 @@ void kerneltrap()
 }
 
 // set up to take exceptions and traps while in the kernel.
-void set_usertrap(void)
+void set_usertrap()
 {
 	w_stvec(((uint64)TRAMPOLINE + (uservec - trampoline)) & ~0x3); // DIRECT
 }
 
-void set_kerneltrap(void)
+void set_kerneltrap()
 {
 	w_stvec((uint64)kerneltrap & ~0x3); // DIRECT
 }
 
 // set up to take exceptions and traps while in the kernel.
-void trap_init(void)
+void trap_init()
 {
 	// intr_on();
 	set_kerneltrap();
@@ -71,40 +71,16 @@ void usertrap()
 			syscall();
 			break;
 		case StoreMisaligned:
-                case StorePageFault:
-                case InstructionMisaligned:
-                case InstructionPageFault:
-                case LoadMisaligned:
-                case LoadPageFault:
-						if (cause == StorePageFault || cause == StorePageFault) {
-							uint64 addr = r_stval();
-							struct VMA* vp = 0;
-							struct proc* p = curr_proc();
-							//to fina the target vma
-							for( int i=0 ; i<VMA_MAX ; i++ ) {
-								if( p->vma[i].addr <= addr && addr < p->vma[i].addr + p->vma[i].len && p->vma[i].valid == 1 )
-								{
-									vp = &p->vma[i];
-									break;
-								}
-							}
-							if( vp != 0) {
-								uint64 mem = (uint64)kalloc();
-								memset( (void*)mem , 0 , PGSIZE );
-
-								if ( mappages(p->pagetable, PGROUNDDOWN(addr), PGSIZE, mem, vp->prot) != 0 ) {
-									kfree((void*)mem);
-									errorf("page map failed");
-								}
-
-								vp->mapcnt++;
-							}
-						}
-                        errorf("%d in application, bad addr = %p, bad instruction = %p, "
-                               "core dumped.",
-                               cause, r_stval(), trapframe->epc);
-                        exit(-2);
-                        break;
+		case StorePageFault:
+		case InstructionMisaligned:
+		case InstructionPageFault:
+		case LoadMisaligned:
+		case LoadPageFault:
+			errorf("%d in application, bad addr = %p, bad instruction = %p, "
+			       "core dumped.",
+			       cause, r_stval(), trapframe->epc);
+			exit(-2);
+			break;
 		case IllegalInstruction:
 			errorf("IllegalInstruction in application, core dumped.");
 			exit(-3);
@@ -146,4 +122,3 @@ void usertrapret()
 	tracef("return to user @ %p", trapframe->epc);
 	((void (*)(uint64, uint64))fn)(TRAPFRAME, satp);
 }
-
