@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     # outputs:
     #   points: ${{ steps.end.outputs.points}}
+    # outputs:
+    #   points: ${{ steps.end.outputs.points}}
     container:
         image: duskmoon/dev-env:ucore-ci
     steps:
