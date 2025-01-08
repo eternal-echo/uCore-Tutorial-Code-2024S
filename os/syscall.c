@@ -66,6 +66,8 @@ int sys_task_info(TaskInfo *ti) {
 	int current_time = (int)((get_cycle() % CPU_FREQ) * 1000 / CPU_FREQ);
 	ti->time = current_time - p->time;
 
+	tracef("sys_task_info: current_time = %d, proc's time = %d", current_time, p->time);
+
 	return 0;
 
 }
