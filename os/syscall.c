@@ -36,9 +36,17 @@ uint64 sys_sched_yield()
 uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofday in pagetable. (VA to PA)
 {
 	// YOUR CODE
-	val->sec = 0;
-	val->usec = 0;
+	uint64 cycle = get_cycle();
+	TimeVal tv;
+	tv.sec = cycle / CPU_FREQ;
+	tv.usec = (cycle % CPU_FREQ) * 1000000 / CPU_FREQ;
 
+	struct proc *p = curr_proc();
+	if (copyout(p->pagetable, (uint64)val, (char *)&tv, sizeof(TimeVal)) < 0) {
+		return -1;
+	}
+	// infof("sys_gettimeofday: sec = %d, usec = %d", tv.sec, tv.usec);
+	// debugf("sec = %d, usec = %d", tv.sec, tv.usec);
 	/* The code in `ch3` will leads to memory bugs*/
 
 	// uint64 cycle = get_cycle();
@@ -66,6 +74,48 @@ uint64 sys_sbrk(int n)
 * LAB1: you may need to define sys_task_info here
 */
 
+/**
+ * @brief  sys_task_info 用于获取当前正在运行的任务（进程）的信息。系统调用功能为
+ * 			查询当前任务的详细信息，包括：
+ * 			- **任务状态**：当前任务的执行状态（如运行中、已退出等）。
+ *			- **系统调用次数**：记录任务自启动以来调用每个**系统调用**的次数。
+ *			- **运行时间**：当前时间与任务首次被调度的时间差（以毫秒为单位）。
+ * 
+ * @param ti TaskInfo 是一个结构体指针，用于存储返回的任务信息。
+ * @return int 成功返回 0，失败返回 1。
+ */
+int sys_task_info(TaskInfo *ti) {
+	// TODO：检查用户空间指针是否合法。ucore不支持。
+	
+	struct proc *p = curr_proc();
+	if (p == 0) {
+		return 1;
+	}
+
+    // 在内核空间创建临时结构体
+    TaskInfo kernel_ti;
+    kernel_ti.status = Running;
+
+    // 复制系统调用次数
+    for (int i = 0; i < MAX_SYSCALL_NUM; i++) {
+        kernel_ti.syscall_times[i] = p->syscall_times[i];
+    }
+
+    // 计算运行时间
+    int current_time = (int)((get_cycle() % CPU_FREQ) * 1000 / CPU_FREQ);
+    kernel_ti.time = current_time - p->time;
+
+    // 将数据从内核空间复制到用户空间
+    if (copyout(p->pagetable, (uint64)ti, (char *)(&kernel_ti), sizeof(TaskInfo)) < 0) {
+        return -1;
+    }
+
+	debugf("sys_task_info: current_time = %d, proc's time = %d", current_time, p->time);
+	debugf("sys_task_info: time = %d, status = %d", kernel_ti.time, kernel_ti.status);
+	return 0;
+
+}
+
 extern char trap_page[];
 
 void syscall()
@@ -79,6 +129,7 @@ void syscall()
 	/*
 	* LAB1: you may need to update syscall counter for task info here
 	*/
+	curr_proc()->syscall_times[id]++;
 	switch (id) {
 	case SYS_write:
 		ret = sys_write(args[0], args[1], args[2]);
@@ -98,6 +149,9 @@ void syscall()
 	/*
 	* LAB1: you may need to add SYS_taskinfo case here
 	*/
+	case SYS_task_info:
+		ret = sys_task_info((TaskInfo *)args[0]);
+		break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);
