@@ -159,7 +159,8 @@ int sys_munmap(void* start, unsigned long long len) {
     struct proc *p = curr_proc();
     
     // 参数检查
-    if (!PGALIGNED((uint64)start) || len == 0) {
+    if (!PGALIGNED((uint64)start) || len == 0 || (len % PGSIZE != 0)) {
+		errorf("sys_munmap: invalid start address or length");
         return -1;
     }
     
@@ -170,11 +171,9 @@ int sys_munmap(void* start, unsigned long long len) {
     uint64 addr;
     addr = (uint64)start;
 	if (useraddr(p->pagetable, addr) <= 0) {
-		return -1;
+		// 逐页解除映射并释放物理内存
+		uvmunmap(p->pagetable, (uint64)start, size / PGSIZE, 1);
 	}
-    
-    // 逐页解除映射并释放物理内存
-    uvmunmap(p->pagetable, (uint64)start, size / PGSIZE, 1);
     
     return 0;
 }
