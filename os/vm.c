@@ -46,48 +46,90 @@ void kvm_init(void)
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
+
+// 
+// pagetable: 
+// va: 
+// alloc: 
+
+/**
+ * @brief [va->pa] 在页表中查找或创建一个PTE（页表项）
+ * 			walk函数模拟了CPU进行MMU的过程。 SV39的转换是由3级页表结构完成。
+ * 
+ * @param pagetable **页表**的基地址
+ * @param va 虚拟地址
+ * @param alloc 如果需要的页表项不存在，是否分配新的页表页
+ * @return pte_t* 
+ * @ref 在riscv.h之中定义的宏函数PX完成了每一级从va转换到pte的过程:
+ */
 pte_t *walk(pagetable_t pagetable, uint64 va, int alloc)
 {
+	// 检查虚拟地址是否超出最大允许范围
 	if (va >= MAXVA)
 		panic("walk");
 
+	// 从最高级页表开始遍历（Sv39使用三级页表） MMU
 	for (int level = 2; level > 0; level--) {
+		// 获取当前级别的页表项指针
 		pte_t *pte = &pagetable[PX(level, va)];
-		if (*pte & PTE_V) {
+		if (*pte & PTE_V) {  // 如果页表项是有效的
+			// 获取下一级页表的物理地址
 			pagetable = (pagetable_t)PTE2PA(*pte);
-		} else {
+		} else {  // 如果页表项无效
+			// 如果不允许分配或内存分配失败，返回0
 			if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
 				return 0;
+			// 初始化新分配的页表页
 			memset(pagetable, 0, PGSIZE);
+			// 设置页表项，标记为有效
 			*pte = PA2PTE(pagetable) | PTE_V;
 		}
 	}
+	// 返回最后一级页表中对应的页表项指针
 	return &pagetable[PX(0, va)];
 }
 
-// Look up a virtual address, return the physical address,
-// or 0 if not mapped.
-// Can only be used to look up user pages.
+/**
+ * @brief 查找虚拟地址对应的物理地址。Look up a virtual address, return the physical page, or 0 if not mapped.
+ * 
+ * @param pagetable 
+ * @param va 虚拟地址。Can only be used to look up user pages.
+ * @return uint64 return the physical page,如果地址未映射，返回0
+ * @note 注意walkaddr函数没有考虑偏移量!
+ */
 uint64 walkaddr(pagetable_t pagetable, uint64 va)
 {
 	pte_t *pte;
 	uint64 pa;
 
+	// 检查虚拟地址是否超出最大允许范围
 	if (va >= MAXVA)
 		return 0;
 
+	// 在页表中查找对应的页表项
 	pte = walk(pagetable, va, 0);
 	if (pte == 0)
 		return 0;
+	// 检查页表项是否有效
 	if ((*pte & PTE_V) == 0)
 		return 0;
+	// 检查是否是用户页面
 	if ((*pte & PTE_U) == 0)
 		return 0;
+	// 从页表项中提取物理地址
 	pa = PTE2PA(*pte);
 	return pa;
 }
 
-// Look up a virtual address, return the physical address,
+
+/**
+ * @brief Look up a virtual address, return the physical address,
+ * 
+ * @param pagetable 
+ * @param va 
+ * @return uint64 
+ * @note 考虑了偏移量，使用时优先考虑这个
+ */
 uint64 useraddr(pagetable_t pagetable, uint64 va)
 {
 	uint64 page = walkaddr(pagetable, va);
@@ -105,10 +147,23 @@ void kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 		panic("kvmmap");
 }
 
+
+
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
+
+/**
+ * @brief 建立新映射。mappages 在 pagetable 中建立 [va, va + size) 到 [pa, pa + size) 的映射，页表属性为perm
+ * 
+ * @param pagetable 
+ * @param va 
+ * @param size 
+ * @param pa 
+ * @param perm mappages的perm是用于控制页表项的flags的。请注意它具体指向哪几位，这将极大地影响页表的可用性。因为CPU进行MMU的时候一旦权限出错，比如CPU在U态访问了flag之中U=0的页表项是会直接报异常的。
+ * @return int 
+ */
 int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
 	uint64 a, last;
@@ -135,6 +190,14 @@ int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
 // Optionally free the physical memory.
+/**
+ * @brief 取消映射
+ * 
+ * @param pagetable 
+ * @param va 
+ * @param npages 
+ * @param do_free do_free 控制是否 kfree 对应的物理内存（比如这是一个共享内存，那么第一次 unmap 就不 free，最后一个 unmap 肯定要 free）。
+ */
 void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
 	uint64 a;

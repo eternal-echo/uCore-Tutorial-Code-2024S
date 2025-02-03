@@ -5,6 +5,8 @@
 #include "timer.h"
 #include "trap.h"
 #include "proc.h"
+#include "kalloc.h"
+#include "vm.h"
 
 uint64 sys_write(int fd, uint64 va, uint len)
 {
@@ -55,6 +57,16 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 	return 0;
 }
 
+/**
+ * @brief System call to adjust program break (heap memory)
+ * 
+ * The sbrk() system call adjusts the program's data space by incrementing 
+ * or decrementing by n bytes. Returns the previous program break address
+ * on success, or -1 on failure.
+ *
+ * @param n Number of bytes to adjust the program break by (positive to increase, negative to decrease)
+ * @return uint64 Previous program break address on success, -1 on failure
+ */
 uint64 sys_sbrk(int n)
 {
 	uint64 addr;
@@ -70,6 +82,103 @@ uint64 sys_sbrk(int n)
 // TODO: add support for mmap and munmap syscall.
 // hint: read through docstrings in vm.c. Watching CH4 video may also help.
 // Note the return value and PTE flags (especially U,X,W,R)
+/**
+ * @brief 将物理内存映射到虚拟地址空间
+ * 
+ * @param start 需要映射的虚存起始地址
+ * @param len 映射字节长度，可以为 0，上限 1GiB
+ * @param port 内存权限，第0位可读，第1位可写，第2位可执行
+ * @param flag 目前始终为0，忽略
+ * @param fd 目前始终为0，忽略
+ * @return int 成功返回0，失败返回-1
+ */
+int sys_mmap(void* start, unsigned long long len, int port, int flag, int fd) {
+    struct proc *p = curr_proc();
+    
+    // 基础参数检查
+	if (!PGALIGNED((uint64)start) || len == 0) {
+		errorf("sys_mmap: invalid start address or length");
+        return -1;
+    }
+    
+    // 检查长度上限(1GiB)
+    if (len > (1ULL << 30)) {
+		errorf("sys_mmap: invalid length");
+        return -1;
+    }
+    
+    // 检查权限位
+    if ((port & ~0x7) != 0 || (port & 0x7) == 0) {
+		errorf("sys_mmap: invalid port");
+        return -1;
+    }
+
+    // 向上取整为页大小
+    uint64 size = PGROUNDUP(len);
+    
+    // 检查地址范围是否已映射
+    uint64 addr;
+	addr = (uint64)start;
+	if (useraddr(p->pagetable, addr) > 0) {
+		errorf("sys_mmap: invalid address");
+		return -1;
+	}
+    
+    // 设置页表项权限
+    int perm = PTE_U; // 用户态可访问
+    if (port & 1) perm |= PTE_R;
+    if (port & 2) perm |= PTE_W;
+    if (port & 4) perm |= PTE_X;
+    
+    // 逐页分配和映射
+    for (addr = (uint64)start; addr < (uint64)start + size; addr += PGSIZE) {
+        void *pa = kalloc();
+        if (pa == 0) {
+			errorf("sys_mmap: kalloc failed");
+            return -1;
+        }
+        memset(pa, 0, PGSIZE);
+        if (mappages(p->pagetable, addr, PGSIZE, (uint64)pa, perm) != 0) {
+            kfree(pa);
+			errorf("sys_mmap: mappages failed");
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+/**
+ * @brief 取消一块虚存的映射
+ * 
+ * @param start 需要取消映射的虚存起始地址，必须页对齐
+ * @param len 取消映射的字节长度
+ * @return int 成功返回0，失败返回-1
+ */
+int sys_munmap(void* start, unsigned long long len) {
+    struct proc *p = curr_proc();
+    
+    // 参数检查
+    if (!PGALIGNED((uint64)start) || len == 0) {
+        return -1;
+    }
+    
+    // 向上取整为页大小
+    uint64 size = PGROUNDUP(len);
+    
+    // 检查地址范围是否都已映射
+    uint64 addr;
+    addr = (uint64)start;
+	if (useraddr(p->pagetable, addr) <= 0) {
+		return -1;
+	}
+    
+    // 逐页解除映射并释放物理内存
+    uvmunmap(p->pagetable, (uint64)start, size / PGSIZE, 1);
+    
+    return 0;
+}
+
 /*
 * LAB1: you may need to define sys_task_info here
 */
@@ -89,7 +198,7 @@ int sys_task_info(TaskInfo *ti) {
 	
 	struct proc *p = curr_proc();
 	if (p == 0) {
-		return 1;
+		return -1;
 	}
 
     // 在内核空间创建临时结构体
@@ -146,6 +255,13 @@ void syscall()
 	case SYS_sbrk:
 		ret = sys_sbrk(args[0]);
 		break;
+	case SYS_mmap:
+		ret = sys_mmap((void *)args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap((void *)args[0], args[1]);
+		break;
+	
 	/*
 	* LAB1: you may need to add SYS_taskinfo case here
 	*/
