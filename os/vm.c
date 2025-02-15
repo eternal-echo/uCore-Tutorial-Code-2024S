@@ -162,7 +162,7 @@ void kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
  * @param size 
  * @param pa 
  * @param perm mappages的perm是用于控制页表项的flags的。请注意它具体指向哪几位，这将极大地影响页表的可用性。因为CPU进行MMU的时候一旦权限出错，比如CPU在U态访问了flag之中U=0的页表项是会直接报异常的。
- * @return int 
+ * @return int 0 on success, -1 if walk() couldn't allocate a needed page-table page.
  */
 int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
@@ -359,33 +359,89 @@ int copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 	return len;
 }
 
+/**
+ * @brief 为进程分配虚拟内存空间。uvmalloc分配新的虚拟内存空间及对应的物理内存空间，建立页表映射关系。
+ * 
+ * @details 该函数负责为进程分配新的虚拟内存空间，将进程的虚拟内存从oldsz增长到newsz。
+ * 函数会**分配物理内存页面**并**建立相应的页表映射关系**。如果分配失败，会释放已分配的资源。
+ * 
+ * 具体步骤:
+ * 1. 检查新大小是否小于原大小
+ * 2. 将旧大小向上对齐到页面大小
+ * 3. 循环分配物理页面并建立映射:
+ *    - 调用 kalloc() 分配物理内存
+ *    - 清零新分配的内存页面
+ *    - 通过 mappages() 建立虚拟地址到物理地址的映射
+ * 
+ * @param pagetable 进程的页表
+ * @param oldsz 原始**虚拟内存**大小
+ * @param newsz 新的**虚拟内存**大小
+ * @param xperm 额外的页表权限标志
+ * @return uint64 成功返回新的内存大小，失败返回0
+ * 
+ * @note 
+ * - newsz 无需按页对齐
+ * - 页表项默认包含 PTE_R|PTE_U 权限，可通过xperm参数添加额外权限
+ * - 失败时会调用 uvmdealloc 清理已分配的资源
+ */
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
-        char *mem;
-        uint64 a;
+	char *mem;
+	uint64 a;
 
-        if(newsz < oldsz)
-                return oldsz;
+	// 如果新大小小于旧大小,直接返回旧大小
+	if(newsz < oldsz)
+		return oldsz;
 
-        oldsz = PGROUNDUP(oldsz);
-        for(a = oldsz; a < newsz; a += PGSIZE){
-                mem = kalloc();
-                if(mem == 0){
-                        uvmdealloc(pagetable, a, oldsz);
-                        return 0;
-                }
-                memset(mem, 0, PGSIZE);
-                if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-                        kfree(mem);
-                        uvmdealloc(pagetable, a, oldsz);
-                        return 0;
-                }
-        }
-        return newsz;
+	// 将旧大小向上对齐到页面大小
+	oldsz = PGROUNDUP(oldsz);
+	
+	// 从旧大小开始,每次增加一个页面大小,直到达到新大小
+	for(a = oldsz; a < newsz; a += PGSIZE){
+		// 分配一个物理页面
+		mem = kalloc();
+		if(mem == 0){
+			// 如果分配失败,释放已分配的内存并返回0
+			uvmdealloc(pagetable, a, oldsz);
+			return 0;
+		}
+		// 将新分配的物理页面清零
+		memset(mem, 0, PGSIZE);
+		
+		// 建立虚拟地址到物理地址的映射
+		// 注：如果指定的虚拟地址范围已经被映射过，会在 mappages() 函数中失败返回-1
+		// PTE_R|PTE_U 表示用户可读,xperm为额外权限
+		if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+			// 如果映射失败,释放物理内存并清理已分配的页表项
+			kfree(mem);
+			uvmdealloc(pagetable, a, oldsz); 
+			return 0;
+		}
+	}
+	// 返回新的内存大小
+	return newsz;
 }
 
+/**
+ * @brief 释放用户进程的内存空间，将进程大小从oldsz调整为newsz
+ *
+ * @param pagetable 需要调整的进程的页表
+ * @param oldsz 原始大小（字节）
+ * @param newsz 新的大小（字节）
+ * @return uint64 调整后的实际大小
+ * 
+ * @note oldsz和newsz不需要按页对齐，newsz也不必小于oldsz
+ *       oldsz可以大于实际进程大小
+ * 
+ * @details 函数处理步骤：
+ * 1. 如果新大小大于等于原大小，直接返回原大小
+ * 2. 计算需要释放的页数：
+ *    - 将oldsz和newsz向上对齐到页边界
+ *    - 计算这两个边界之间的页数
+ * 3. 调用uvmunmap释放这些页，最后一个参数1表示要释放物理内存
+ */
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
@@ -395,6 +451,7 @@ uint64 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
         if(newsz >= oldsz)
                 return oldsz;
 
+		
         if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
                 int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
                 uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);

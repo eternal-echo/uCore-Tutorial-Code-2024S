@@ -13,7 +13,6 @@
 
 - 页表 `typedef uint64 *pagetable_t;`：地址转换的核心任务在于如何维护虚拟页号到物理页号的**映射**。用于构建多级页表结构。
     - 是一个指针,指向512个连续的**PTE数组**。一个页表占用一个4KB页面。
-    <!-- - 用户使用USTACK_SIZE 4k的页表作为进程的栈。内核使用一张4k的页表作为。 -->
 - 页表项 (PTE, Page Table Entry) `typedef uint64 pte_t`：物理页号和全部的**标志位**以某种固定的格式保存在一个结构体中，是利用**虚拟页号**在页表中查到的结果。
     - 存储单个页面（4k）映射信息
     - 包含物理页号(PPN)和权限标志位
@@ -31,7 +30,7 @@
 
 ## 函数
 
-- bin_loader：pg分配一张页表的空间，分配好了进程的页表后再把trap（4k）和ustack（4k）映射（mappages）到y页表pg。
+- bin_loader：为每个进程的pg分配一张页表的空间，分配好了进程的页表后再把trap（4k）和ustack（4k）映射（mappages）到页表pg。
 
 - 页表实现va–>pa的转换过程
     - `vm.c`的`walk`模拟CPU进行MMU的过程。输入**页表**和**待转换的虚拟地址**，通过SV39的转换返回了 页表项 (PTE, Page Table Entry) 。

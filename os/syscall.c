@@ -58,23 +58,35 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz) // TODO: implement sys_gettimeofd
 }
 
 /**
- * @brief System call to adjust program break (heap memory)
+ * @brief 系统调用：调整程序的堆内存大小
  * 
- * The sbrk() system call adjusts the program's data space by incrementing 
- * or decrementing by n bytes. Returns the previous program break address
- * on success, or -1 on failure.
- *
- * @param n Number of bytes to adjust the program break by (positive to increase, negative to decrease)
- * @return uint64 Previous program break address on success, -1 on failure
+ * sbrk()系统调用通过增加或减少n字节来调整程序的数据空间（堆空间）。
+ * 主要用途：
+ * 1. 为程序动态分配内存（如malloc的底层实现）
+ * 2. 管理进程的堆空间大小
+ * 
+ * 关键点：
+ * - program_brk是进程堆空间的当前末尾地址
+ * - 通过growproc()来实际改变进程的内存空间
+ * - 返回增长/收缩前的program_brk值
+ * 
+ * 堆空间管理：
+ * - 增加空间(n > 0): growproc会分配新的物理页面并映射到虚拟地址空间
+ * - 减少空间(n < 0): growproc会解除映射并释放相应的物理页面
+ * - 空间来源：系统的空闲物理内存页面
+ * 
+ * @param n 需要调整的字节数（正数增加空间，负数减少空间）
+ * @return uint64 调整前的program_brk地址（成功），-1（失败）
  */
 uint64 sys_sbrk(int n)
 {
 	uint64 addr;
-        struct proc *p = curr_proc();
-        addr = p->program_brk;
-        if(growproc(n) < 0)
-                return -1;
-        return addr;	
+	struct proc *p = curr_proc();
+	addr = p->program_brk;
+	if(growproc(n) < 0) {
+		return -1;
+	}
+	return addr;	
 }
 
 
@@ -107,43 +119,20 @@ int sys_mmap(void* start, unsigned long long len, int port, int flag, int fd) {
         return -1;
     }
     
-    // 检查权限位
+    // 检查权限位：0-7
     if ((port & ~0x7) != 0 || (port & 0x7) == 0) {
 		errorf("sys_mmap: invalid port");
         return -1;
     }
-
-    // 向上取整为页大小
-    uint64 size = PGROUNDUP(len);
     
-    // 检查地址范围是否已映射
-    uint64 addr;
-	addr = (uint64)start;
-	if (useraddr(p->pagetable, addr) > 0) {
-		errorf("sys_mmap: invalid address");
+	// 申请新的虚存空间并映射
+    uint64 addr = (uint64)start;
+	uint64 newsz = addr + (uint64)len;
+    if (uvmalloc(p->pagetable, addr, newsz, port) == 0) {
+		errorf("sys_mmap: 分配失败或映射失败（例如重复映射）");
 		return -1;
 	}
-    
-    // 设置页表项权限
-    int perm = PTE_U; // 用户态可访问
-    if (port & 1) perm |= PTE_R;
-    if (port & 2) perm |= PTE_W;
-    if (port & 4) perm |= PTE_X;
-    
-    // 逐页分配和映射
-    for (addr = (uint64)start; addr < (uint64)start + size; addr += PGSIZE) {
-        void *pa = kalloc();
-        if (pa == 0) {
-			errorf("sys_mmap: kalloc failed");
-            return -1;
-        }
-        memset(pa, 0, PGSIZE);
-        if (mappages(p->pagetable, addr, PGSIZE, (uint64)pa, perm) != 0) {
-            kfree(pa);
-			errorf("sys_mmap: mappages failed");
-            return -1;
-        }
-    }
+
     
     return 0;
 }

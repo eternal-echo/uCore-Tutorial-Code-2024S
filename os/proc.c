@@ -143,25 +143,58 @@ void exit(int code)
 	finished();
 	sched();
 }
+/*
+ * 增长或缩减用户进程的内存空间。uvmalloc分配新的虚拟内存空间及对应的物理内存空间，建立页表映射关系。
+ * 
+ * @param n: 需要增加或减少的字节数。正数表示增加内存，负数表示减少内存
+ * @return: 成功返回0，失败返回-1
+ * 
+ * 功能说明:
+ * 1. 获取当前进程的program_brk（堆区结束地址）
+ * 2. 计算新的堆区大小（相对于堆底的偏移量）
+ * 3. 如果新的堆区大小小于0，返回错误
+ * 4. 如果是扩展内存(n>0):
+ *    - 调用uvmalloc分配新的虚拟内存空间
+ *    - 分配失败返回-1
+ * 5. 如果是收缩内存(n<0):
+ *    - 调用uvmdealloc释放多余的虚拟内存空间
+ * 6. 更新进程的program_brk
+ * 
+ * 注意事项:
+ * - 此函数通常用于实现用户空间的brk/sbrk系统调用
+ * - 所有内存操作都在页表pagetable中进行
+ * - 新分配的内存页面具有可写权限(PTE_W)
+ */
 
 // Grow or shrink user memory by n bytes.
-// Return 0 on succness, -1 on failure.
+// Return 0 on success, -1 on failure.
 int growproc(int n)
 {
-        uint64 program_brk;
-        struct proc *p = curr_proc();
-        program_brk = p->program_brk;
-        int new_brk = program_brk + n - p->heap_bottom;
-        if(new_brk < 0){
-                return -1;
-        }
-        if(n > 0){
-                if((program_brk = uvmalloc(p->pagetable, program_brk, program_brk + n, PTE_W)) == 0) {
-                        return -1;
-                }
-        } else if(n < 0){
-                program_brk = uvmdealloc(p->pagetable, program_brk, program_brk + n);
-        }
-        p->program_brk = program_brk;
-        return 0;
+	// 声明program_brk变量用于存储堆区结束地址
+	uint64 program_brk;
+	// 获取当前进程的PCB
+	struct proc *p = curr_proc();
+	// 获取当前堆区结束地址
+	program_brk = p->program_brk;
+	// 计算新的堆区大小（相对于堆底的偏移量）
+	int new_brk = program_brk + n - p->heap_bottom;
+	// 如果新的堆区大小小于0，表示收缩过多，返回错误
+	if(new_brk < 0){
+		return -1;
+	}
+	// 扩展内存空间
+	if(n > 0){
+		// 调用uvmalloc分配新的虚拟内存空间，设置为可写
+		if((program_brk = uvmalloc(p->pagetable, program_brk, program_brk + n, PTE_W)) == 0) {
+			return -1;
+		}
+	} 
+	// 收缩内存空间
+	else if(n < 0){
+		// 调用uvmdealloc释放多余的虚拟内存空间
+		program_brk = uvmdealloc(p->pagetable, program_brk, program_brk + n);
+	}
+	// 更新进程的堆区结束地址
+	p->program_brk = program_brk;
+	return 0;
 }
