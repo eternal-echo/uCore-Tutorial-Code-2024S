@@ -8,6 +8,8 @@
 #include "kalloc.h"
 #include "vm.h"
 
+#define MMAP_LAZY
+
 uint64 sys_write(int fd, uint64 va, uint len)
 {
 	debugf("sys_write fd = %d va = %x, len = %d", fd, va, len);
@@ -89,7 +91,7 @@ uint64 sys_sbrk(int n)
 	return addr;	
 }
 
-
+extern pte_t *walk(pagetable_t pagetable, uint64 va, int alloc);
 
 // TODO: add support for mmap and munmap syscall.
 // hint: read through docstrings in vm.c. Watching CH4 video may also help.
@@ -124,15 +126,48 @@ int sys_mmap(void* start, unsigned long long len, int port, int flag, int fd) {
 		errorf("sys_mmap: 权限错误 %d，应为0-7", port);
         return -1;
     }
-    
+
+	uint64 addr = (uint64)start;
+	uint64 end = addr + (uint64)len;
+#ifdef MMAP_LAZY
+	// 找到一个 vmarea 插槽并初始化
+	int idx = -1;
+	for (int i = 0; i < VMA_MAX; i++) {
+        if (p->vma[i].valid) {
+            uint64 vma_start = p->vma[i].addr;
+            uint64 vma_end = vma_start + p->vma[i].len;
+            
+            // 检查地址区间是否有重叠
+            if (!(end <= vma_start || addr >= vma_end)) {
+                errorf("sys_mmap: address range overlaps with existing mapping");
+                return -1;
+            }
+        } else if (idx == -1) {
+			idx = i;
+		}
+	}
+	if (idx == -1) {
+		errorf("sys_mmap: no available vma slot");
+		return -1;
+	}
+	struct VMA* vp = &p->vma[idx];
+	vp->valid = 1;
+	vp->len = len;
+	vp->flags = flag;
+	vp->prot = port;
+	vp->addr = addr;
+	vp->off = 0;
+	vp->mapcnt = 0;
+	
+#else
 	// 申请新的虚存空间并映射
-    uint64 addr = (uint64)start;
-	uint64 newsz = addr + (uint64)len;
 	// uvmalloc()会自动对齐到页边界，3位的port权限左移1位表示valid的页表项合法，就和与riscv的PTE权限的低四位（共8位）对齐了
-    if (uvmalloc(p->pagetable, addr, newsz, port<<1) != newsz) {
+    if (uvmalloc(p->pagetable, addr, end, port<<1) != end) {
 		errorf("sys_mmap: 分配失败或映射失败（例如重复映射）");
 		return -1;
 	}
+
+#endif
 
     
     return 0;
@@ -157,12 +192,38 @@ int sys_munmap(void* start, unsigned long long len) {
     }
     
     // 取消映射
-	uint64 old_addr = addr + (uint64)len;
-	uint64 res = uvmdealloc(p->pagetable, old_addr, addr);
+	#ifdef MMAP_LAZY
+	// 找到对应的 vmarea 并取消映射
+	int idx = -1;
+	for (int i = 0; i < VMA_MAX; i++) {
+		if (p->vma[i].valid == 1 && p->vma[i].addr == addr) {
+			idx = i;
+			break;
+		}
+	}
+	if (idx == -1) {
+		errorf("sys_munmap: no vma found");
+		return -1;
+	}
+	struct VMA* vp = &p->vma[idx];
+	// if the page has been mapped 
+	if (vp->mapcnt > 0 && walkaddr( p->pagetable , addr ) != 0) {
+		// unmap the page
+		uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+		vp->mapcnt -= len / PGSIZE;
+	}
+	if (vp->mapcnt == 0) {
+		vp->valid = 0;
+	}
+	
+#else
+	uint64 end = addr + (uint64)len;
+	uint64 res = uvmdealloc(p->pagetable, end, addr);
 	if (res != addr) {
 		errorf("sys_munmap: 释放失败，res = %d", res);
 		return -1;
 	}
+#endif
 	
 	return 0;
 }

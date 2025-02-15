@@ -74,6 +74,12 @@ found:
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+
+	// init vma
+	for (int i = 0; i < VMA_MAX; i++) {
+		p->vma[i].valid = 0;
+		p->vma[i].mapcnt = 0;
+	}
 	return p;
 }
 

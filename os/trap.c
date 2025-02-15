@@ -4,6 +4,7 @@
 #include "syscall.h"
 #include "timer.h"
 
+
 extern char trampoline[], uservec[];
 extern char userret[];
 
@@ -75,6 +76,30 @@ void usertrap()
                 case InstructionPageFault:
                 case LoadMisaligned:
                 case LoadPageFault:
+						if (cause == StorePageFault || cause == StorePageFault) {
+							uint64 addr = r_stval();
+							struct VMA* vp = 0;
+							struct proc* p = curr_proc();
+							//to fina the target vma
+							for( int i=0 ; i<VMA_MAX ; i++ ) {
+								if( p->vma[i].addr <= addr && addr < p->vma[i].addr + p->vma[i].len && p->vma[i].valid == 1 )
+								{
+									vp = &p->vma[i];
+									break;
+								}
+							}
+							if( vp != 0) {
+								uint64 mem = (uint64)kalloc();
+								memset( (void*)mem , 0 , PGSIZE );
+
+								if ( mappages(p->pagetable, PGROUNDDOWN(addr), PGSIZE, mem, vp->prot) != 0 ) {
+									kfree((void*)mem);
+									errorf("page map failed");
+								}
+
+								vp->mapcnt++;
+							}
+						}
                         errorf("%d in application, bad addr = %p, bad instruction = %p, "
                                "core dumped.",
                                cause, r_stval(), trapframe->epc);
