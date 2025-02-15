@@ -191,7 +191,7 @@ int growproc(int n)
 	} 
 	// 收缩内存空间
 	else if(n < 0){
-		// 调用uvmdealloc释放多余的虚拟内存空间
+		// 调用uvmdealloc释放多余的虚拟内存空间，注意，这里的n是负数，所以old地址大于new地址
 		program_brk = uvmdealloc(p->pagetable, program_brk, program_brk + n);
 	}
 	// 更新进程的堆区结束地址

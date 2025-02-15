@@ -23,5 +23,7 @@ git clone git@github.com:LearningOS/uCore-Tutorial-Test-2024S.git user
 
 注意：`user` 已添加至 `.gitignore`，你无需将其提交，ci 也不会使用它
 
+```bash
 docker run -it --rm -v $(pwd):/workspace -w /workspace tclab/ucore-env
 docker run -it --rm -v $(pwd):/workspace -w /workspace tclab/ucore-env /bin/bash -c "make test CHAPTER=4_3 BASE=1 LOG=trace"
+```

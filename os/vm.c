@@ -374,10 +374,10 @@ int copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
  *    - 通过 mappages() 建立虚拟地址到物理地址的映射
  * 
  * @param pagetable 进程的页表
- * @param oldsz 原始**虚拟内存**大小
- * @param newsz 新的**虚拟内存**大小
- * @param xperm 额外的页表权限标志
- * @return uint64 成功返回新的内存大小，失败返回0
+ * @param oldsz 原始**虚拟地址**
+ * @param newsz 新的**虚拟地址**
+ * @param xperm 额外的页表权限标志：PTE_V=(1L << 0)=1，PTE_R=(1L << 1)=2，PTE_W=(1L << 2)=4，PTE_X=(1L << 3)=8，PTE_U=(1L << 4)=16
+ * @return uint64 成功返回新虚拟地址
  * 
  * @note 
  * - newsz 无需按页对齐
@@ -420,16 +420,15 @@ uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 			return 0;
 		}
 	}
-	// 返回新的内存大小
 	return newsz;
 }
 
 /**
- * @brief 释放用户进程的内存空间，将进程大小从oldsz调整为newsz
+ * @brief 释放用户进程的内存空间，将虚拟内存从oldsz调整为newsz
  *
  * @param pagetable 需要调整的进程的页表
- * @param oldsz 原始大小（字节）
- * @param newsz 新的大小（字节）
+ * @param oldsz 原始虚拟地址
+ * @param newsz 新的虚拟地址
  * @return uint64 调整后的实际大小
  * 
  * @note oldsz和newsz不需要按页对齐，newsz也不必小于oldsz
@@ -448,15 +447,15 @@ uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 // process size.  Returns the new process size.
 uint64 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
-        if(newsz >= oldsz)
-                return oldsz;
+	if(newsz >= oldsz)
+			return oldsz;
 
-		
-        if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
-                int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
-                uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
-        }
+	
+	if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+			int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+			uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
+	}
 
-        return newsz;
+	return newsz;
 }
 

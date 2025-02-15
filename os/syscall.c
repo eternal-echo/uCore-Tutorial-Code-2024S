@@ -83,7 +83,7 @@ uint64 sys_sbrk(int n)
 	uint64 addr;
 	struct proc *p = curr_proc();
 	addr = p->program_brk;
-	if(growproc(n) < 0) {
+	if(growproc(n) != 0) {
 		return -1;
 	}
 	return addr;	
@@ -99,7 +99,7 @@ uint64 sys_sbrk(int n)
  * 
  * @param start 需要映射的虚存起始地址
  * @param len 映射字节长度，可以为 0，上限 1GiB
- * @param port 内存权限，第0位可读，第1位可写，第2位可执行
+ * @param port 内存权限，第0位可读（1），第1位可写（2），第2位可执行（4）
  * @param flag 目前始终为0，忽略
  * @param fd 目前始终为0，忽略
  * @return int 成功返回0，失败返回-1
@@ -121,14 +121,15 @@ int sys_mmap(void* start, unsigned long long len, int port, int flag, int fd) {
     
     // 检查权限位：0-7
     if ((port & ~0x7) != 0 || (port & 0x7) == 0) {
-		errorf("sys_mmap: invalid port");
+		errorf("sys_mmap: 权限错误 %d，应为0-7", port);
         return -1;
     }
     
 	// 申请新的虚存空间并映射
     uint64 addr = (uint64)start;
 	uint64 newsz = addr + (uint64)len;
-    if (uvmalloc(p->pagetable, addr, newsz, port) == 0) {
+	// uvmalloc()会自动对齐到页边界，3位的port权限左移1位表示valid的页表项合法，就和与riscv的PTE权限的低四位（共8位）对齐了
+    if (uvmalloc(p->pagetable, addr, newsz, port<<1) != newsz) {
 		errorf("sys_mmap: 分配失败或映射失败（例如重复映射）");
 		return -1;
 	}
@@ -147,24 +148,23 @@ int sys_mmap(void* start, unsigned long long len, int port, int flag, int fd) {
 int sys_munmap(void* start, unsigned long long len) {
     struct proc *p = curr_proc();
     
+	// 起始地址，也是unmap后的新地址
+	uint64 addr = (uint64)start;
     // 参数检查
-    if (!PGALIGNED((uint64)start) || len == 0 || (len % PGSIZE != 0)) {
+    if (!PGALIGNED(addr) || len == 0 || (len % PGSIZE != 0)) {
 		errorf("sys_munmap: invalid start address or length");
         return -1;
     }
     
-    // 向上取整为页大小
-    uint64 size = PGROUNDUP(len);
-    
-    // 检查地址范围是否都已映射
-    uint64 addr;
-    addr = (uint64)start;
-	if (useraddr(p->pagetable, addr) <= 0) {
-		// 逐页解除映射并释放物理内存
-		uvmunmap(p->pagetable, (uint64)start, size / PGSIZE, 1);
+    // 取消映射
+	uint64 old_addr = addr + (uint64)len;
+	uint64 res = uvmdealloc(p->pagetable, old_addr, addr);
+	if (res != addr) {
+		errorf("sys_munmap: 释放失败，res = %d", res);
+		return -1;
 	}
-    
-    return 0;
+	
+	return 0;
 }
 
 /*
