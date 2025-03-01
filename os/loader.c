@@ -82,6 +82,9 @@ int bin_loader(uint64 start, uint64 end, struct proc *p)
 		panic("...");
 
 	void *page;
+	// 注意现在我们不要求对齐了，代码的核心逻辑还是把 [start, end)
+	// 映射到虚拟内存的 [BASE_ADDRESS, BASE_ADDRESS + length)
+
 	// 计算需要映射的物理地址范围（页对齐）
 	uint64 pa_start = PGROUNDDOWN(start);
 	uint64 pa_end = PGROUNDUP(end);
@@ -90,9 +93,16 @@ int bin_loader(uint64 start, uint64 end, struct proc *p)
 	uint64 va_start = BASE_ADDRESS;
 	uint64 va_end = BASE_ADDRESS + length;
 
+	// 对于 .bin 的每一页，都申请一个新页并进行内容拷贝，最后建立这一页的映射。
+	// 为什么要拷贝呢？Lab4直接把源程序镜像所在的位置映射过来了，不能第二次执行
+	// 因为 .data 和 .bss 段数据都被上一次执行改掉了，不是初始化的状态。每个程序仅能运行一次。
+
 	// 为程序代码和数据分配物理页并建立映射
+	// 不再一次 map 很多页面，而是逐页 map，为什么？
 	for (uint64 va = va_start, pa = pa_start; pa < pa_end;
 		 va += PGSIZE, pa += PGSIZE) {
+		// 这里我们不会直接映射，而是新分配一个页面，然后使用 memmove 进行拷贝
+		// 这样就不会有对其的问题了，但为何这么做其实有更深层的原因。
 		page = kalloc();
 		if (page == 0) {
 			panic("...");
@@ -100,6 +110,7 @@ int bin_loader(uint64 start, uint64 end, struct proc *p)
 		// 复制程序内容到新分配的物理页
 		memmove(page, (const void *)pa, PGSIZE);
 		// 处理页边界的特殊情况，确保未使用的部分被清零
+		// 这个 if 就是为了防止 start end 不对其导致拷贝了多余的内核数据，我们需要手动把它们清空
 		if (pa < start) {
 			memset(page, 0, start - va);
 		} else if (pa + PAGE_SIZE > end) {

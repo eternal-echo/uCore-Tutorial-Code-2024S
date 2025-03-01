@@ -120,13 +120,7 @@ void scheduler()
 			if (p->state == RUNNABLE) {
 				has_proc = 1;
 				tracef("swtich to proc %d", p - pool);
-				/*
-				* LAB1: you may need to init proc start time here
-				*/
-				if (p->time == -1) {
-					uint64 cycle = get_cycle();
-					p->time = (int) ((cycle % CPU_FREQ) * 1000 / CPU_FREQ);
-				}
+				
 				p->state = RUNNING;
 				current_proc = p;
 				swtch(&idle.context, &p->context);
@@ -140,6 +134,11 @@ void scheduler()
 			panic("all app are over!\n");
 		}
 		tracef("swtich to proc %d", p - pool);
+		// 记录起始时间
+		if (p->time == -1) {
+			uint64 cycle = get_cycle();
+			p->time = (int) ((cycle % CPU_FREQ) * 1000 / CPU_FREQ);
+		}
 		p->state = RUNNING;
 		current_proc = p;
 		swtch(&idle.context, &p->context);

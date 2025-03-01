@@ -119,51 +119,6 @@ uint64 sys_set_priority(long long prio){
 }
 
 
-uint64 sys_getpid()
-{
-	return curr_proc()->pid;
-}
-
-uint64 sys_getppid()
-{
-	struct proc *p = curr_proc();
-	return p->parent == NULL ? IDLE_PID : p->parent->pid;
-}
-
-uint64 sys_clone()
-{
-	debugf("fork!\n");
-	return fork();
-}
-
-uint64 sys_exec(uint64 va)
-{
-	struct proc *p = curr_proc();
-	char name[200];
-	copyinstr(p->pagetable, name, va, 200);
-	debugf("sys_exec %s\n", name);
-	return exec(name);
-}
-
-uint64 sys_wait(int pid, uint64 va)
-{
-	struct proc *p = curr_proc();
-	int *code = (int *)useraddr(p->pagetable, va);
-	return wait(pid, code);
-}
-
-uint64 sys_spawn(uint64 va)
-{
-	// TODO: your job is to complete the sys call
-	return -1;
-}
-
-uint64 sys_set_priority(long long prio){
-    // TODO: your job is to complete the sys call
-    return -1;
-}
-
-
 
 /**
  * @brief 系统调用：调整程序的堆内存大小
@@ -405,7 +360,7 @@ void syscall()
 		ret = sys_sched_yield();
 		break;
 	case SYS_gettimeofday:
-		ret = sys_gettimeofday(args[0], args[1]);
+		ret = sys_gettimeofday((TimeVal *)args[0], args[1]);
 		break;
 	case SYS_getpid:
 		ret = sys_getpid();

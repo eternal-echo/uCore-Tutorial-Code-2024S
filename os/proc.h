@@ -48,25 +48,29 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
    uint64 mapcnt;    //（延迟申请）已经映射的页数量
  };
 
-// Per-process state
+/**
+ * @brief 进程控制块结构体，包含进程的所有状态信息
+ * @note 这个结构体是操作系统中进程管理的核心数据结构
+ */
 struct proc {
-	enum procstate state; // Process state
-	int pid; // Process ID
-	pagetable_t pagetable; // User page table
-	uint64 ustack; // Virtual address of kernel stack
-	uint64 kstack; // Virtual address of kernel stack
-	struct trapframe *trapframe; // data page for trampoline.S
-	struct context context; // swtch() here to run process
-	uint64 max_page;
-	struct proc *parent; // Parent process
-	uint64 exit_code;
-	struct file *files[FD_BUFFER_SIZE];
-	uint64 program_brk;
-	uint64 heap_bottom;
-	int time;
-	int syscall_times[MAX_SYSCALL_NUM];
-	// mmap
-	struct VMA vma[VMA_MAX];
+	enum procstate state;        // 进程状态（UNUSED/USED/SLEEPING等）
+	int pid;                     // 进程ID，用于唯一标识进程
+	pagetable_t pagetable;      // 用户进程页表，管理进程的虚拟地址空间
+	uint64 ustack;              // 用户栈的虚拟地址
+	uint64 kstack;              // 内核栈的虚拟地址
+	struct trapframe *trapframe; // 保存进程切换时的寄存器状态
+	struct context context;      // 进程上下文，用于进程切换
+	uint64 max_page;            // 进程可使用的最大页数
+	struct proc *parent;        // 父进程指针，用于进程树管理
+	uint64 exit_code;           // 进程退出码
+	struct file *files[FD_BUFFER_SIZE];  // 进程打开的文件描述符数组
+	uint64 program_brk;         // 程序break位置，用于堆管理
+	uint64 heap_bottom;         // 堆的起始地址
+	int time;                   // 进程运行时间
+	int syscall_times[MAX_SYSCALL_NUM];  // 系统调用次数统计数组
+	
+	// 内存映射区域管理
+	struct VMA vma[VMA_MAX];    // 虚拟内存区域数组，用于mmap实现
 };
 
 int cpuid();
