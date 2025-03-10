@@ -3,6 +3,7 @@
 #define QUEUE_SIZE (1024)
 
 // TODO: change the queue to a priority queue sorted by priority
+// TODO: 使用链表来实现优先级队列
 
 struct queue {
 	int data[QUEUE_SIZE];

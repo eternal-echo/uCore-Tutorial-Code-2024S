@@ -110,12 +110,30 @@ uint64 sys_wait(int pid, uint64 va)
 uint64 sys_spawn(uint64 va)
 {
 	// TODO: your job is to complete the sys call
-	return -1;
+	char name[200];
+
+	struct proc *p = curr_proc();
+	copyinstr(p->pagetable, name, va, 200);
+
+	return spawn(name);
 }
 
 uint64 sys_set_priority(long long prio){
     // TODO: your job is to complete the sys call
-    return -1;
+	// 检查优先级是否合法（>=2）
+	if (prio < 2) {
+		return -1;
+	}
+
+	// 获取当前进程
+	struct proc *p = curr_proc();
+
+	// 设置新的优先级
+	p->priority = prio;
+
+	// 重新计算pass值
+	p->pass = BIG_STRIDE / prio;
+    return prio;
 }
 
 
@@ -392,6 +410,10 @@ void syscall()
 	
 	case SYS_task_info:
 		ret = sys_task_info((TaskInfo *)args[0]);
+		break;
+
+	case SYS_setpriority:
+		ret = sys_set_priority(args[0]);
 		break;
 	default:
 		ret = -1;

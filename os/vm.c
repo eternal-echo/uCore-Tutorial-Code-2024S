@@ -276,9 +276,19 @@ void uvmfree(pagetable_t pagetable, uint64 max_page)
 	freewalk(pagetable);
 }
 
-// Used in fork.
-// Copy the pagetable page and all the user pages.
-// Return 0 on success, -1 on error.
+/**
+ * @brief 用于fork时复制父进程的页表和用户空间内存
+ * 
+ * @param old 父进程的页表
+ * @param new 子进程的页表
+ * @param max_page 需要复制的页表最大页数
+ * @return int 成功返回0，失败返回-1
+ * 
+ * @details 该函数会遍历父进程的整个用户空间，为每个有效的页表项:
+ * 1. 分配新的物理内存
+ * 2. 复制内存内容
+ * 3. 在子进程页表中建立相同的映射
+ */
 int uvmcopy(pagetable_t old, pagetable_t new, uint64 max_page)
 {
 	pte_t *pte;
@@ -286,17 +296,28 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 max_page)
 	uint flags;
 	char *mem;
 
-	for (i = 0; i < max_page * PAGE_SIZE; i += PGSIZE) {
-		if ((pte = walk(old, i, 0)) == 0)
+	// 遍历整个用户地址空间
+	for(i = 0; i < max_page * PAGE_SIZE; i += PGSIZE){
+		// 在父进程页表中查找页表项，不存在则继续
+		if((pte = walk(old, i, 0)) == 0)
 			continue;
-		if ((*pte & PTE_V) == 0)
+		// 页表项无效则继续
+		if((*pte & PTE_V) == 0)
 			continue;
+		
+		// 获取物理地址和页表项标志位
 		pa = PTE2PA(*pte);
 		flags = PTE_FLAGS(*pte);
-		if ((mem = kalloc()) == 0)
+		
+		// 为子进程分配新的物理页面
+		if((mem = kalloc()) == 0)
 			goto err;
-		memmove(mem, (char *)pa, PGSIZE);
-		if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
+		
+		// 将父进程的页面内容复制到子进程的新页面
+		memmove(mem, (char*)pa, PGSIZE);
+		
+		// 在子进程页表中建立映射，使用相同的权限标志
+		if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
 			kfree(mem);
 			goto err;
 		}
@@ -304,6 +325,7 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 max_page)
 	return 0;
 
 err:
+	// 发生错误时，清理已分配的内存和页表项
 	uvmunmap(new, 0, i / PGSIZE, 1);
 	return -1;
 }

@@ -14,6 +14,8 @@ struct file;
 
 #define VMA_MAX 16
 
+#define BIG_STRIDE 0x100000000ULL  // 2^32
+
 // Saved registers for kernel context switches.
 struct context {
 	uint64 ra;
@@ -71,6 +73,11 @@ struct proc {
 	
 	// 内存映射区域管理
 	struct VMA vma[VMA_MAX];    // 虚拟内存区域数组，用于mmap实现
+
+	// 优先级
+	uint64 stride;    // 当前步长
+	uint64 pass;      // 步长增量
+	long long priority;  // 优先级
 };
 
 int cpuid();
@@ -93,6 +100,7 @@ void proc_init();
 void scheduler() __attribute__((noreturn));
 void sched();
 void yield();
+int spawn(char *name);
 int fork();
 int exec(char *);
 int wait(int, int *);

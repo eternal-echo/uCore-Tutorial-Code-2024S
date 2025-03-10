@@ -6,6 +6,8 @@
 #include "timer.h"
 #include "queue.h"
 
+#define DEFAULT_PRIORITY 16        // 默认优先级
+
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
 __attribute__((aligned(4096))) char trapframe[NPROC][TRAP_PAGE_SIZE];
@@ -13,7 +15,7 @@ __attribute__((aligned(4096))) char trapframe[NPROC][TRAP_PAGE_SIZE];
 extern char boot_stack_top[];
 struct proc *current_proc;
 struct proc idle;
-struct queue task_queue;
+// struct queue task_queue;
 
 int threadid()
 {
@@ -42,7 +44,7 @@ void proc_init()
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = IDLE_PID;
 	current_proc = &idle;
-	init_queue(&task_queue);
+	// init_queue(&task_queue);
 }
 
 int allocpid()
@@ -53,7 +55,18 @@ int allocpid()
 
 struct proc *fetch_task()
 {
-	int index = pop_queue(&task_queue);
+	int index = 0;
+    uint64 min_stride = 0xFFFFFFFFFFFFFFFF;  // 初始设为最大值
+
+	// int index = pop_queue(&task_queue);
+	for (int i = 0; i < NPROC; i++) {
+		if (pool[i].state == RUNNABLE) {
+			if (pool[i].stride < min_stride) {
+				min_stride = pool[i].stride;
+				index = i;
+			}
+		}
+	}
 	if (index < 0) {
 		debugf("No task to fetch\n");
 		return NULL;
@@ -64,7 +77,7 @@ struct proc *fetch_task()
 
 void add_task(struct proc *p)
 {
-	push_queue(&task_queue, p - pool);
+	// push_queue(&task_queue, p - pool);
 	debugf("add task %d(pid=%d) to task queue\n", p - pool, p->pid);
 }
 
@@ -103,6 +116,12 @@ found:
 		p->vma[i].valid = 0;
 		p->vma[i].mapcnt = 0;
 	}
+
+	// 在进程初始化时设置默认值
+	p->stride = 0;
+	p->priority = DEFAULT_PRIORITY;
+	p->pass = BIG_STRIDE / DEFAULT_PRIORITY;
+
 	return p;
 }
 
@@ -113,7 +132,8 @@ found:
 //    via swtch back to the scheduler.
 void scheduler()
 {
-	struct proc *p;
+    struct proc *p;
+
 	for (;;) {
 		/*int has_proc = 0;
 		for (p = pool; p < &pool[NPROC]; p++) {
@@ -129,19 +149,30 @@ void scheduler()
 		if(has_proc == 0) {
 			panic("all app are over!\n");
 		}*/
+
+		// 寻找stride最小的可运行进程
 		p = fetch_task();
 		if (p == NULL) {
 			panic("all app are over!\n");
 		}
 		tracef("swtich to proc %d", p - pool);
-		// 记录起始时间
-		if (p->time == -1) {
-			uint64 cycle = get_cycle();
-			p->time = (int) ((cycle % CPU_FREQ) * 1000 / CPU_FREQ);
+
+		// 如果找到可运行进程
+		if (p != NULL) {
+			// 更新进程的 stride 值
+			p->stride += p->pass;
+
+			// 记录起始时间
+			if (p->time == -1) {
+				uint64 cycle = get_cycle();
+				p->time = (int) ((cycle % CPU_FREQ) * 1000 / CPU_FREQ);
+			}
+			
+			// 运行该进程
+			p->state = RUNNING;
+			current_proc = p;
+			swtch(&idle.context, &p->context);
 		}
-		p->state = RUNNING;
-		current_proc = p;
-		swtch(&idle.context, &p->context);
 	}
 }
 
@@ -185,38 +216,116 @@ void freeproc(struct proc *p)
 	p->state = UNUSED;
 }
 
-int fork()
+int spawn(char *name)
 {
-	struct proc *np;
+	// 获取父进程
 	struct proc *p = curr_proc();
-	// Allocate process.
-	if ((np = allocproc()) == 0) {
+	// 分配一个新的进程控制块PCB
+	struct proc *np = allocproc();
+	if (np == 0) {
 		panic("allocproc\n");
 	}
-	// Copy user memory from parent to child.
-	if (uvmcopy(p->pagetable, np->pagetable, p->max_page) < 0) {
-		panic("uvmcopy\n");
+	
+	// 加载程序到进程空间
+	int id = get_id_by_name(name);
+	if (id < 0) {
+		return -1;
 	}
-	np->max_page = p->max_page;
-	// copy saved user registers.
-	*(np->trapframe) = *(p->trapframe);
-	// Cause fork to return 0 in the child.
-	np->trapframe->a0 = 0;
+	loader(id, np);
+	
+	// 设置父子进程关系
 	np->parent = p;
+	
+	// 将子进程状态设置为就绪态
 	np->state = RUNNABLE;
+
+	// 将新进程添加到任务调度队列
 	add_task(np);
+
 	return np->pid;
 }
 
+
+/**
+ * @brief 创建一个新进程作为当前进程的子进程
+ * 
+ * @return 对于父进程返回子进程的pid，对于子进程返回0；失败时panic
+ * 
+ * 主要步骤：
+ * 1. 为子进程分配PCB和相关资源
+ * 2. 复制父进程的用户空间内存到子进程
+ * 3. 设置子进程的trapframe和寄存器状态
+ * 4. 建立父子进程关系并将子进程加入调度队列
+ */
+int fork()
+{
+	// 获取当前进程（父进程）的PCB
+	struct proc *p = curr_proc();
+	struct proc *np;
+
+	// 为子进程分配一个新的进程控制块
+	if ((np = allocproc()) == 0) {
+		panic("allocproc\n");
+	}
+
+	// 复制父进程的页表内容到子进程，包括用户空间的所有内存
+	if (uvmcopy(p->pagetable, np->pagetable, p->max_page) < 0) {
+		panic("uvmcopy\n");
+	}
+	// 继承父进程的内存页数
+	np->max_page = p->max_page;
+
+	// 复制父进程的trapframe到子进程，这包含了进程的寄存器状态
+	*(np->trapframe) = *(p->trapframe);
+	
+	// 设置子进程trapframe中的a0寄存器为0
+	// 这样当子进程从fork返回时将得到0，而父进程得到子进程的pid
+	np->trapframe->a0 = 0;
+
+	// 设置父子进程关系
+	np->parent = p;
+	
+	// 将子进程状态设置为就绪态
+	np->state = RUNNABLE;
+	
+	// 将子进程添加到任务调度队列
+	add_task(np);
+
+	// 父进程返回子进程的pid
+	return np->pid;
+}
+
+/**
+ * @brief 将当前进程替换为新的程序
+ * 
+ * @param name 要加载的程序名称
+ * @return 成功返回0，失败返回-1
+ * 
+ * 主要步骤：
+ * 1. 根据程序名称获取程序ID
+ * 2. 清空当前进程的用户空间
+ * 3. 加载新程序到当前进程
+ */
 int exec(char *name)
 {
+	// 通过程序名称获取对应的程序ID，如果不存在则返回错误
 	int id = get_id_by_name(name);
 	if (id < 0)
 		return -1;
+
+	// 获取当前进程PCB
 	struct proc *p = curr_proc();
+
+	// 解除当前进程用户空间的所有映射（第四个参数1表示同时释放物理内存）
 	uvmunmap(p->pagetable, 0, p->max_page, 1);
+	
+	// 重置进程的页面数量
 	p->max_page = 0;
+
+	// 加载新程序到当前进程的地址空间
+	// loader函数负责设置进程的代码段、数据段等
 	loader(id, p);
+
 	return 0;
 }
 
